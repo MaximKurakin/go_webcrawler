@@ -17,16 +17,17 @@ var pwd, _ = os.Getwd()
 
 type Page struct {
 	Title string
-	Body  []byte
+	Body  template.HTML
 }
 
 func loadPage(title string) (*Page, error) {
 	filename := pwd + "/web/" + title + ".html"
 	body, err := ioutil.ReadFile(filename)
+	bodys := template.HTML(body)
 	if err != nil {
 		return nil, err
 	}
-	return &Page{Title: title, Body: body}, nil
+	return &Page{Title: title, Body: bodys}, nil
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
