@@ -9,11 +9,8 @@ import (
 	"html/template"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"fmt"
 )
-
-var pwd, _ = os.Getwd()
 
 type Page struct {
 	Title string
@@ -21,7 +18,7 @@ type Page struct {
 }
 
 func loadPage(title string) (*Page, error) {
-	filename := pwd + "/web/" + title + ".html"
+	filename := "." + "/web/" + title + ".html"
 	body, err := ioutil.ReadFile(filename)
 	bodys := template.HTML(body)
 	if err != nil {
@@ -39,7 +36,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 	renderTemplate(w, "view", p)
 }
 
-var templates = template.Must(template.ParseFiles(pwd+"/tmpl/view.html"))
+var templates = template.Must(template.ParseFiles("."+"/tmpl/view.html"))
 
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
 	err := templates.ExecuteTemplate(w, tmpl+".html", p)

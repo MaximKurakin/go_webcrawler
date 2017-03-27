@@ -9,20 +9,23 @@ import (
 	"fmt"
 	"time"
 	"net/http"
+	"net/url"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 )
 
 // Types block -------------------------------------------------------------------------
 type Fetcher interface {
 	// Fetch returns the body of URL and
 	// a slice of URLs found on that page.
-	Fetch(url string) (body []byte, urls []string, err error)
+	Fetch(url string) (err error)
+	saveResult() (err error)
 }
 
 
 type fetchResult struct {
-	url string
+	url url.URL
 	body []byte
 	urls []string
 }
@@ -32,22 +35,18 @@ type fetchResult struct {
 
 
 // Functions block ---------------------------------------------------------------------
-func Crawl(url string, fetcher Fetcher) {
-return
-	body, urls, err := fetcher.Fetch(url)
-_ = urls
+func Crawl(url string) {
+	var fetcher fetchResult
+	
+	// fetch URL
+	err := fetcher.Fetch(url)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	//fmt.Printf("found: %s %q\n", url, body)
-	var result = fetchResult{
-		"/p",
-		body,
-		nil,
-	}
-	_ = result
-	err = result.saveResult()
+	
+	// save file
+	err = fetcher.saveResult()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -60,28 +59,41 @@ _ = urls
 	return
 }
 
-func (f fetchResult) Fetch(url string) ([]byte, []string, error) {
-	
+func (f *fetchResult) Fetch(url string) (error) {
+	// get the URL
 	response, err := http.Get(url);
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	
 	// get body
-	defer response.Body.Close()
-	body, err := ioutil.ReadAll(response.Body)
+	// defer response.Body.Close() // seems don't need to explicitly call this method anymore
+	
+f.body, err = ioutil.ReadAll(response.Body)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	
+	// get URL path
+	f.url = *response.Request.URL
+	//fmt.Printf("%#v\n", f.url)
 	
-	return body, nil, nil
+	return nil
 }
 
 func (p *fetchResult) saveResult() error {
-	filename := "." + "/localhost65123" + p.url + ".html"
-	os.MkdirAll("." + "/localhost65123" + "/", 0777);
-	//fmt.Println(filename)
+	u_path		:= p.url.Path
+	base_path	:= filepath.Base(u_path)
+	subdir		:= filepath.Dir(u_path)
+	
+	if ("" == u_path || "/" == u_path) {
+		base_path = "/index"
+	}
+	
+	filename := filepath.Clean("./" + p.url.Host + subdir + "/" + base_path + ".html")
+	os.MkdirAll(filepath.Clean("./" + p.url.Host + subdir), 0777);
+	fmt.Println(filename, base_path, subdir)
+	
 	return ioutil.WriteFile(filename, p.body, 0600)
 }
 
@@ -92,10 +104,8 @@ func main() {
 	simple_http("65123")
 	fmt.Println("Web server started ", time.Since(start))
 	
-	// fill structures
-	var fetcher fetchResult
 	// start crawl
-	Crawl("http://localhost:65123/p", fetcher)
+	Crawl("http://ydacha-mb.org/arhiv-dokumentatsii-zastrojshhika")
 	
 	for {
 		
