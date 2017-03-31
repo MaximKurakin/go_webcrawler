@@ -16,7 +16,10 @@ import (
 	"path/filepath"
 	"golang.org/x/net/html"
 	"strings"
+	"errors"
 )
+
+var urlFin := make(map[string]string)
 
 // Types block -------------------------------------------------------------------------
 type Fetcher interface {
@@ -58,35 +61,32 @@ func Crawl(url string) {
 		return
 	}
 	// recursion
-	/*for _, u := range urls {
-		Crawl(u, fetcher)
+	/*for _, u := range fetcher.urls {
+		Crawl(u)
 	}*/
 
 	return
 }
 
 func (f *fetchResult) Fetch(url string) (error) {
+	// check the URL
+	u, err := chkURL(url)
+	if err != nil { return err }
+	f.url = u
+	
 	// get the URL
-	response, err := http.Get(url);
-	if err != nil {
-		return err
-	}
+	response, err := http.Get(f.url.String());
+	if err != nil { return err }
+	if response.StatusCode != 200 { return errors.New(fmt.Sprintf("Http response code: %v", response.StatusCode)) }
 	
 	// get body
 	f.body, err = ioutil.ReadAll(response.Body)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	defer response.Body.Close()
 	
 	// get URLs
 	err = f.URLfind()
-	if err != nil {
-		return err
-	}
-	
-	// get URL path
-	f.url = *response.Request.URL
+	if err != nil { return err }
 	
 	return nil
 }
@@ -97,12 +97,8 @@ func (f *fetchResult) makeFileName(urlstr string) (fileName string) {
 	
 	if (urlstr != "") {
 		ff, err = url.Parse(urlstr)
-		if err != nil {
-			return ""
-		}
-	}else{
-		ff = &f.url
-	}
+		if err != nil { return "" }
+	}else{ ff = &f.url }
 
 	u_path := filepath.Clean(ff.Path)
 	subdir, base_path := filepath.Split(u_path)
@@ -132,38 +128,48 @@ func (f *fetchResult) URLfind() error {
 		switch {
 		case tt == html.ErrorToken:
 			// End of the document, we're done
-			fmt.Println(f.filePath)
+			fmt.Println(f.urls)
 			return nil
 		case tt == html.StartTagToken:
 			t := z.Token()
 
 			// Check if the token is an <a> tag
 			isAnchor := t.Data == "a"
-			if !isAnchor {
-				continue
-			}
+			if !isAnchor { continue }
 
 			// Extract the href value, if there is one
 			ok, urlstr := getHref(t)
-			if !ok {
-				continue
-			}
+			if !ok { continue }
+
+			u, err := chkURL(urlstr)
+			if err != nil { continue }
 			
-			//// Make sure the url begines in http**
-			//hasProto := strings.Index(url, "http") == 0
-			//if hasProto {
-			u, err := url.Parse(urlstr)
-			if (!url.IsAbs(u)) {
+			//fmt.Printf("%s %s %s\n\n", u.Scheme, u.Opaque, u.Path)
+			if (!u.IsAbs()) {
 				u.Scheme = f.url.Scheme
 				u.Host = f.url.Host
+				urlstr = u.String()
 			}
-				f.urls = append(f.urls, urlstr)
-				f.filePath = append(f.filePath, f.makeFileName(urlstr))
-			//}
+
+			// check if exists and add to the channel
+			f.urls = append(f.urls, urlstr)
+			f.filePath = append(f.filePath, f.makeFileName(urlstr))
 		}
 	}
 
 	return nil
+}
+
+func addUrlFin(arr map[string]string, ustr string) map[string]string {
+	
+}
+
+func chkURL(ustr string) (url.URL, error) {
+	u, err := url.Parse(ustr)
+	if err != nil {	return url.URL{}, err}
+	if len(u.Opaque) > 0 { return url.URL{}, errors.New("Opaque found in URL") }
+	
+	return *u, nil
 }
 
 func getHref(t html.Token) (ok bool, href string) {
@@ -184,21 +190,18 @@ func main() {
 	fmt.Println("Starting Web server...")
 	simple_http("65123")
 	fmt.Println("Web server started ", time.Since(start))
-	
+
 	// start crawl
 	Crawl("http://localhost:65123/b")
-	
-	for {
-		
-	}
+
+	var input string
+    fmt.Scanln(&input)
 }
 
 
 func stripchars(str, chr string) string {
-    return strings.Map(func(r rune) rune {
-        if strings.IndexRune(chr, r) < 0 {
-            return r
-        }
-        return -1
-    }, str)
+	return strings.Map(func(r rune) rune {
+		if strings.IndexRune(chr, r) < 0 { return r }
+		return -1
+	}, str)
 }
