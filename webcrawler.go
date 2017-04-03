@@ -17,9 +17,18 @@ import (
 	"golang.org/x/net/html"
 	"strings"
 	"errors"
+	"sync"
+	"runtime"
+	"strconv"
 )
 
-var urlFin := make(map[string]string)
+type safeMap struct {
+	umap	map[string]bool
+	mux 	sync.Mutex
+}
+var urlFin = safeMap{umap: make(map[string]bool)}
+
+var baseUrl *url.URL
 
 // Types block -------------------------------------------------------------------------
 type Fetcher interface {
@@ -35,8 +44,6 @@ type fetchResult struct {
 	url 		url.URL
 	body		[]byte
 	urls		[]string
-	filePath	[]string
-	subdir		string
 }
 
 // Fetcher is Fetcher that returns canned results.
@@ -61,9 +68,9 @@ func Crawl(url string) {
 		return
 	}
 	// recursion
-	/*for _, u := range fetcher.urls {
+	for _, u := range fetcher.urls {
 		Crawl(u)
-	}*/
+	}
 
 	return
 }
@@ -77,7 +84,7 @@ func (f *fetchResult) Fetch(url string) (error) {
 	// get the URL
 	response, err := http.Get(f.url.String());
 	if err != nil { return err }
-	if response.StatusCode != 200 { return errors.New(fmt.Sprintf("Http response code: %v", response.StatusCode)) }
+	if response.StatusCode != 200 { return errors.New(fmt.Sprintf("Error: %v on %s", response.StatusCode, f.url.String())) }
 	
 	// get body
 	f.body, err = ioutil.ReadAll(response.Body)
@@ -88,10 +95,12 @@ func (f *fetchResult) Fetch(url string) (error) {
 	err = f.URLfind()
 	if err != nil { return err }
 	
+	//fmt.Println(f.urls)
+	
 	return nil
 }
 
-func (f *fetchResult) makeFileName(urlstr string) (fileName string) {
+func (f *fetchResult) makeFileName(urlstr string) (string) {
 	var ff *url.URL
 	var err error
 	
@@ -104,11 +113,17 @@ func (f *fetchResult) makeFileName(urlstr string) (fileName string) {
 	subdir, base_path := filepath.Split(u_path)
 
 	if ("" == u_path || string(filepath.Separator) == u_path) {
-		base_path = "index"
+		base_path = "index.html"
 	}
-	fileName = stripchars(filepath.Clean("./" + ff.Host + subdir + "/" + base_path + ".html"), ":*?\"<>|")
-
-	return fileName
+	
+	extension := filepath.Ext(base_path)
+	if extension != "" {
+		base_path = strings.TrimSuffix(base_path, filepath.Ext(base_path))
+	}else{
+		extension = ".html"
+	}
+	
+	return stripchars(filepath.Clean("./" + ff.Host + subdir + "/" + base_path + extension), ":*?\"<>|")
 }
 
 func (f *fetchResult) saveResult() error {
@@ -128,7 +143,7 @@ func (f *fetchResult) URLfind() error {
 		switch {
 		case tt == html.ErrorToken:
 			// End of the document, we're done
-			fmt.Println(f.urls)
+			//fmt.Println(f.url.String(), " ", f.urls)
 			return nil
 		case tt == html.StartTagToken:
 			t := z.Token()
@@ -140,34 +155,71 @@ func (f *fetchResult) URLfind() error {
 			// Extract the href value, if there is one
 			ok, urlstr := getHref(t)
 			if !ok { continue }
-
-			u, err := chkURL(urlstr)
+			
+			// check URL
+			ur, err := chkURL(urlstr)
 			if err != nil { continue }
 			
-			//fmt.Printf("%s %s %s\n\n", u.Scheme, u.Opaque, u.Path)
-			if (!u.IsAbs()) {
-				u.Scheme = f.url.Scheme
-				u.Host = f.url.Host
-				urlstr = u.String()
+			// Replace URL in BODY with local one
+			f.body = bytes.Replace(f.body, []byte("href=\""+urlstr+"\""), []byte("href=\""+makeLocalURL(urlstr)+"\""), -1)
+			
+			// make ABS url
+			if ur.IsAbs() == true {
+				urlstr = urlstr
+			} else if ur.IsAbs() == false {
+				urlstr = baseUrl.ResolveReference(&ur).String()
+			} else if strings.HasPrefix(urlstr, "//") {
+				ur.Scheme = baseUrl.Scheme
+				ur.Host = baseUrl.Host
+				urlstr = ur.String()
+			} else if strings.HasPrefix(urlstr, "/") {
+				ur.Scheme = baseUrl.Scheme
+				ur.Host = baseUrl.Host
+				urlstr = ur.String()
+			} else {
+				urlstr = urlstr
 			}
 
+			// make absolute URL
+			/*if (!ur.IsAbs()) {
+				ur.Scheme = f.url.Scheme
+				ur.Host = f.url.Host
+				urlstr = ur.String()
+			}*/
+
 			// check if exists and add to the channel
-			f.urls = append(f.urls, urlstr)
-			f.filePath = append(f.filePath, f.makeFileName(urlstr))
+			wasIn := addUrlFin(&urlFin, urlstr)
+			if !wasIn { f.urls = append(f.urls, urlstr) }
 		}
 	}
 
 	return nil
 }
 
-func addUrlFin(arr map[string]string, ustr string) map[string]string {
+// TODO: figire out this issue later
+func makeLocalURL(oUrl string) (lUrl string) {
+	lUrl = strings.TrimSuffix(oUrl, "/") + ".html"
 	
+	return lUrl
+}
+
+func addUrlFin(uarr *safeMap, ustr string) (ok bool) {
+	uarr.mux.Lock()
+	defer uarr.mux.Unlock()
+	
+	_, ok = uarr.umap[ustr]
+	if !ok { uarr.umap[ustr] = true }
+	
+	return ok
 }
 
 func chkURL(ustr string) (url.URL, error) {
 	u, err := url.Parse(ustr)
 	if err != nil {	return url.URL{}, err}
 	if len(u.Opaque) > 0 { return url.URL{}, errors.New("Opaque found in URL") }
+	if u.IsAbs() == true {
+		if (baseUrl.Scheme != u.Scheme || baseUrl.Host != u.Host) { return url.URL{}, nil }
+	}
 	
 	return *u, nil
 }
@@ -184,16 +236,32 @@ func getHref(t html.Token) (ok bool, href string) {
 	return ok, href
 }
 
+
 func main() {
+	if len(os.Args) < 2 { fmt.Println("Please, specify web site URL"); os.Exit(2) }
+	u := os.Args[1]
+	
+	//set how many processes (threads to use)
+	if len(os.Args) > 2 {
+		threadsNum, _ := strconv.Atoi(os.Args[2])
+		runtime.GOMAXPROCS(threadsNum)
+	}
+	
 	// start HTTP server
 	start := time.Now()
 	fmt.Println("Starting Web server...")
 	simple_http("65123")
 	fmt.Println("Web server started ", time.Since(start))
-
+	
+	start = time.Now()
+	fmt.Println("Start Crawling of ", u)
+	
+	// define Schema, Host for given URL
+	baseUrl, _ = url.Parse(u)
 	// start crawl
-	Crawl("http://localhost:65123/b")
-
+	Crawl(u)
+	fmt.Println("Crawl finished... ", time.Since(start))
+	
 	var input string
     fmt.Scanln(&input)
 }
