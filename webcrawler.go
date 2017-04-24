@@ -52,9 +52,9 @@ type fetchResult struct {
 
 // Functions block ---------------------------------------------------------------------
 func Crawl(url string, c chan string, wg *sync.WaitGroup) {
-	defer wg.Done()
 	var fetcher fetchResult
 fmt.Println("Crawling begin")
+	defer wg.Done();
 	// fetch URL
 	err := fetcher.Fetch(url)
 	if err != nil {
@@ -70,6 +70,7 @@ fmt.Println("Crawling begin")
 	}
 	// recursion
 	for _, u := range fetcher.urls {
+		wg.Add(1)
 		fmt.Println("Send: ", u)
 		//c <- u
 		go func () { c <- u }()
@@ -279,7 +280,6 @@ func main() {
 	// receiver
 	counter := 1
 	for i := range c {
-		wg.Add(1)
 		counter++
 		go Crawl(i, c, wg)
 	}
